@@ -21,7 +21,7 @@ static asmlinkage long (*syscalls_original_func_p[NUM_OF_HOOKED_SYSCALLS])(const
 typedef enum {OPENAT_FUNC_INDEX = 0, OPEN_FUNC_INDEX = 1} syscall_func_index;
 
 // list of our defined functions that will override the originals
-unsigned long (*hooks_func_list[NUM_OF_HOOKED_SYSCALLS])(const struct pt_regs *) = {open_syscall_hook, openat_syscall_hook};
+unsigned long (*hooks_func_list[NUM_OF_HOOKED_SYSCALLS])(const struct pt_regs *) = {openat_syscall_hook, open_syscall_hook};
 
 
 static asmlinkage unsigned long open_syscall_hook(const struct pt_regs *regs) 
@@ -121,7 +121,7 @@ static int __init hook_start(void)
         // save the origin func pointer, return to it if the kernel module will be removed by rmmod
         syscalls_original_func_p[i] = (void *)sys_call_table_p[hooked_syscalls_numbers[i]];
         // put our function in the appropriate location in the syscall table
-        sys_call_table_p[hooked_syscalls_numbers[i]] = (long unsigned int *)hooks_func_list[i];
+        sys_call_table_p[hooked_syscalls_numbers[i]] = (unsigned long *)hooks_func_list[i];
     }
 
     enable_write_protection();
