@@ -1,10 +1,56 @@
 #include <linux/kprobes.h>
 
-static uid_t uid;
-static unsigned long **sys_call_table_p;
-static asmlinkage long (*original_func_p)(const struct pt_regs *); 
+#define NUM_OF_HOOKED_SYSCALLS 2
 
-static asmlinkage long open_syscall_hook(const struct pt_regs *regs) 
+// decleration of our functions
+static asmlinkage unsigned long open_syscall_hook(const struct pt_regs *);
+static asmlinkage unsigned long openat_syscall_hook(const struct pt_regs *); 
+
+static uid_t uid;
+
+//location of the syscall table
+static unsigned long **sys_call_table_p;
+
+//list of all the numbers of the syscalls being hooked
+static unsigned short hooked_syscalls_numbers[NUM_OF_HOOKED_SYSCALLS] = {__NR_openat, __NR_open};
+
+//list of all the original func pointers of the syscalls
+static asmlinkage long (*syscalls_original_func_p[NUM_OF_HOOKED_SYSCALLS])(const struct pt_regs *);
+
+// for each syscall, this enum gives the appropriate index in the above tables
+typedef enum {OPENAT_FUNC_INDEX = 0, OPEN_FUNC_INDEX = 1} syscall_func_index;
+
+// list of our defined functions that will override the originals
+unsigned long (*hooks_func_list[NUM_OF_HOOKED_SYSCALLS])(const struct pt_regs *) = {open_syscall_hook, openat_syscall_hook};
+
+
+static asmlinkage unsigned long open_syscall_hook(const struct pt_regs *regs) 
+{ 
+#define READ_ONLY 0
+#define WRITE_ONLY 1
+#define READ_WRITE 2
+
+    int i = 0;
+    unsigned int mode_bitfield = regs->si & 0x3;
+    char file_name[256];
+    char *mode = (mode_bitfield & O_RDWR) ? "READ WRITE" : ((mode_bitfield & O_WRONLY) ? "WRITE ONLY" : "READ ONLY");
+    uid = __kuid_val(current_uid());
+
+    do {
+        get_user(*(file_name+i), (char __user *)regs->di + i);
+        i++; 
+    } while ( *(file_name+i-1) != '\0' && i < 255 );
+
+    if( uid != 0 && strnstr(file_name,"Desktop",strlen(file_name)) != NULL){
+        pr_info("open() syscall: mode %s by uid:%d file name:%s", mode ,uid ,file_name);
+    }
+
+    return syscalls_original_func_p[OPEN_FUNC_INDEX](regs);
+} 
+
+
+
+static asmlinkage unsigned long openat_syscall_hook(const struct pt_regs *regs) 
 { 
 #define READ_ONLY 0
 #define WRITE_ONLY 1
@@ -22,10 +68,10 @@ static asmlinkage long open_syscall_hook(const struct pt_regs *regs)
     } while ( *(file_name+i-1) != '\0' && i < 255 );
 
     if( uid != 0 && strnstr(file_name,"Desktop",strlen(file_name)) != NULL){
-        pr_info("Opened mode %s by uid:%d file name:%s", mode ,uid ,file_name);
+        pr_info("openat() syscall: mode %s by uid:%d file name:%s", mode ,uid ,file_name);
     }
 
-    return original_func_p(regs);
+    return syscalls_original_func_p[OPENAT_FUNC_INDEX](regs);
 } 
 
 static unsigned long **find_sys_call_table_p(void) 
@@ -67,21 +113,30 @@ static void disable_write_protection(void)
 static int __init hook_start(void) 
 { 
     if (!(sys_call_table_p = find_sys_call_table_p())) 
-        return -1; 
-    disable_write_protection(); 
-    original_func_p = (void *)sys_call_table_p[__NR_openat]; 
-    sys_call_table_p[__NR_openat] = (unsigned long *)open_syscall_hook; 
-    enable_write_protection(); 
-    return 0; 
-} 
+        return -1;
+
+    disable_write_protection();
+
+    for(int i = 0; i < NUM_OF_HOOKED_SYSCALLS; ++i){
+        // save the origin func pointer, return to it if the kernel module will be removed by rmmod
+        syscalls_original_func_p[i] = (void *)sys_call_table_p[hooked_syscalls_numbers[i]];
+        // put our function in the appropriate location in the syscall table
+        sys_call_table_p[hooked_syscalls_numbers[i]] = (long unsigned int *)hooks_func_list[i];
+    }
+
+    enable_write_protection();
+    return 0;
+}
 
 static void __exit hook_end(void) 
 {
-    disable_write_protection(); 
-    sys_call_table_p[__NR_openat] = (unsigned long *)original_func_p; 
+    disable_write_protection();
+    for(int i = 0; i < NUM_OF_HOOKED_SYSCALLS; ++i)
+        sys_call_table_p[hooked_syscalls_numbers[i]] = (unsigned long *)syscalls_original_func_p[i]; 
+    
     enable_write_protection(); 
     pr_alert("Finite Incantatem");
-} 
+}
 
 module_init(hook_start); 
 module_exit(hook_end); 
