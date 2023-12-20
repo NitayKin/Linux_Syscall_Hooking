@@ -48,8 +48,6 @@ static asmlinkage unsigned long open_syscall_hook(const struct pt_regs *regs)
     return syscalls_original_func_p[OPEN_FUNC_INDEX](regs);
 } 
 
-
-
 static asmlinkage unsigned long openat_syscall_hook(const struct pt_regs *regs) 
 { 
 #define READ_ONLY 0
@@ -76,6 +74,7 @@ static asmlinkage unsigned long openat_syscall_hook(const struct pt_regs *regs)
 
 static unsigned long **find_sys_call_table_p(void) 
 { 
+    //kallsyms_lookup_name not exportable, use kprobe to get its location
     unsigned long (*kallsyms_lookup_name)(const char *name); 
     struct kprobe kp = { 
         .symbol_name = "kallsyms_lookup_name", 
@@ -87,12 +86,12 @@ static unsigned long **find_sys_call_table_p(void)
     kallsyms_lookup_name = (unsigned long (*)(const char *name))kp.addr; 
     unregister_kprobe(&kp); 
 
+    //using our now found kallsyms_lookup_name to find the symbol location of "sys_call_table"
     return (unsigned long **)kallsyms_lookup_name("sys_call_table"); 
 } 
 
 static inline void __write_cr0(unsigned long cr0) 
-{ 
-
+{
     asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory"); 
 } 
 
